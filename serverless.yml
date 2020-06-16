@@ -1,0 +1,313 @@
+service: serverless-blog
+
+custom:
+  resourcesS3Bucket: ${self:service}-resources
+  contentS3Bucket: ${self:service}-content
+  hostedZoneName: atashbahar.com
+  blogDomainName: ${self:custom.hostedZoneName}
+  resourcesDomainName: res.${self:custom.hostedZoneName}
+
+role-assumeRolePolicy: &assumeRolePolicy
+  AssumeRolePolicyDocument:
+    Version: '2012-10-17'
+    Statement:
+      - Effect: Allow
+        Principal:
+          Service:
+            - lambda.amazonaws.com
+        Action: sts:AssumeRole
+
+provider:
+  name: aws
+  region: us-east-1
+  deploymentBucket: serverless-app-deploys
+  stage: prod
+  runtime: dotnetcore3.1
+  memorySize: 1024
+
+package:
+  individually: true
+
+functions:
+  host:
+    description: This lambda function proxies all the requests to asp.net core application
+    role: apiGatewayRole
+    handler: ServerlessBlog.ServiceHost::ServerlessBlog.ServiceHost.LambdaEntryPoint::FunctionHandlerAsync
+    package:
+      artifact: serverless-blog-host.zip
+    events:
+      - http:
+          path: /
+          method: any
+      - http:
+          path: "{proxy+}"
+          method: any
+  processor:
+    description: This lambda function processes the posts and stores them in dynamoDB
+    role: contentProcessorRole
+    handler: ServerlessBlog.Processor::ServerlessBlog.Processor.ContentProcessor::Process
+    package:
+      artifact: serverless-blog-processor.zip
+    events:
+      - s3:
+          bucket: ${self:custom.contentS3Bucket}
+          event: s3:ObjectCreated:*
+      - s3:
+          bucket: ${self:custom.contentS3Bucket}
+          event: s3:ObjectRemoved:*
+
+resources:
+  Resources:
+    # basic policy used by all lambdas
+    basicLambdaPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-basicLambdaPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - arn:aws:logs:*:*:log-group:/aws/lambda/*:*:*
+            - Effect: Allow
+              Action:
+                - lambda:AddPermission
+                - lambda:RemovePermission
+                - lambda:GetPolicy
+                - lambda:InvokeFunction
+              Resource:
+                - arn:aws:lambda:*:*:*:*
+            - Effect: Allow
+              Action:
+                - lambda:ListEventSourceMappings
+              Resource: "*"
+
+    dynamoDBPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-dynamoDBPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:DescribeTable
+                - dynamodb:BatchWriteItem
+                - dynamodb:BatchGetItem
+              Resource:
+                - arn:aws:dynamodb:*:*:table/${self:service}-*
+
+    # policy to put items in cloud watch
+    cloudWatchPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:service}-cloudWatchPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+              Resource: "*"
+
+    # role for the blog lambda
+    apiGatewayRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        ManagedPolicyArns:
+          - { "Ref": "basicLambdaPolicy" }
+          - { "Ref": "cloudWatchPolicy" }
+          - { "Ref": "dynamoDBPolicy" }
+        <<: *assumeRolePolicy
+
+    # role for the processor lambda
+    contentProcessorRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        ManagedPolicyArns:
+          - { "Ref": "basicLambdaPolicy" }
+          - { "Ref": "cloudWatchPolicy" }
+          - { "Ref": "dynamoDBPolicy" }
+        <<: *assumeRolePolicy
+        Policies:
+          - PolicyName: S3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:DeleteObject
+                  Resource: arn:aws:s3:::${self:custom.contentS3Bucket}/*
+
+    # S3 bucket that blog resources (such as images are stored)
+    resourcesS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.resourcesS3Bucket}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+
+    # policy for resources S3 bucket (let's see if we need this)
+    resourcesS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: resourcesS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.resourcesS3Bucket}/*
+
+    # DynamoDB table that stores content
+    contentDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "PostId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "PostId"
+            KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+        TableName: "${self:service}-posts"
+        GlobalSecondaryIndexes:
+          - IndexName: "All-Posts-Index"
+            KeySchema:
+              - AttributeName: "PostId"
+                KeyType: "HASH"
+            Projection:
+              NonKeyAttributes:
+                - "Title"
+              ProjectionType: "INCLUDE"
+
+    # blog certificate
+    blogCert:
+      Type: AWS::CertificateManager::Certificate
+      Properties:
+        DomainName: ${self:custom.blogDomainName}
+        ValidationMethod: DNS
+
+    # resources certificate
+    resourcesCert:
+      Type: AWS::CertificateManager::Certificate
+      Properties:
+        DomainName: ${self:custom.resourcesDomainName}
+        ValidationMethod: DNS
+
+    # cloud front distribution for resources bucket
+    resourcesCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: ${self:custom.resourcesS3Bucket}.s3.amazonaws.com
+              Id: Resources
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+          Enabled: 'true'
+          Aliases:
+          - ${self:custom.resourcesDomainName}
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            TargetOriginId: Resources
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            AcmCertificateArn:  { "Ref" : "resourcesCert" }
+            SslSupportMethod: sni-only
+
+    # record set group for the resources domain
+    resourcesRecordSetGroup:
+      Type: AWS::Route53::RecordSetGroup
+      DependsOn: resourcesCloudFrontDistribution
+      Properties:
+        HostedZoneName: ${self:custom.hostedZoneName}.
+        RecordSets:
+          - Name: ${self:custom.resourcesDomainName}
+            Type: A
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2
+              DNSName:
+                Fn::GetAtt:
+                  - resourcesCloudFrontDistribution
+                  - DomainName
+
+    # domain name for the blog
+    blogDomainName:
+      Type: AWS::ApiGateway::DomainName
+      Properties:
+        RegionalCertificateArn:  { "Ref" : "blogCert" }
+        DomainName: ${self:custom.blogDomainName}
+        EndpointConfiguration:
+          Types:
+            - REGIONAL
+
+    # record set group for the blog domain
+    blogRecordSetGroup:
+      Type: AWS::Route53::RecordSetGroup
+      DependsOn: blogDomainName
+      Properties:
+        HostedZoneName: ${self:custom.hostedZoneName}.
+        RecordSets:
+          - Name: ${self:custom.blogDomainName}
+            Type: A
+            AliasTarget:
+              HostedZoneId:
+                Fn::GetAtt:
+                  - blogDomainName
+                  - RegionalHostedZoneId
+              DNSName:
+                Fn::GetAtt:
+                  - blogDomainName
+                  - RegionalDomainName
+
+    # base path mapping for the blog api gateway
+    basePathMapping:
+      Type: AWS::ApiGateway::BasePathMapping
+      DependsOn: blogRecordSetGroup
+      Properties:
+        DomainName: ${self:custom.blogDomainName}
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Stage: ${self:provider.stage}
+
+  Outputs:
+    ResourcesCloudFrontDistributionOutput:
+      Value:
+        'Fn::GetAtt': [ resourcesCloudFrontDistribution, DomainName ]

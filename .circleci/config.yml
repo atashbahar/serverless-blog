@@ -1,0 +1,38 @@
+version: 2.1
+jobs:
+  build:
+    docker:
+      - image: mcr.microsoft.com/dotnet/core/sdk:3.1
+    steps:
+      - checkout
+      - run: apt-get update && apt-get install -y zip
+      - run: dotnet tool install Amazon.Lambda.Tools --tool-path /bin
+      - run: dotnet restore src/serverless-blog.sln
+      - run: dotnet build src/serverless-blog.sln
+      - run: dotnet test --no-build src/ServerlessBlog.Tests
+      - run: dotnet lambda package -pl src/ServerlessBlog.ServiceHost -c Release --framework netcoreapp3.1 --msbuild-parameters '/p:PublishReadyToRun=true --self-contained false' serverless-blog-host.zip
+      - run: dotnet lambda package -pl src/ServerlessBlog.Processor -c Release --framework netcoreapp3.1 --msbuild-parameters '/p:PublishReadyToRun=true --self-contained false' serverless-blog-processor.zip
+      - persist_to_workspace:
+          root: .
+          paths:
+            - serverless-blog-host.zip
+            - serverless-blog-processor.zip
+            - serverless.yml
+  deploy:
+    docker:
+      - image: circleci/node:latest
+    steps:
+      - attach_workspace:
+          at: .
+      - run: find .
+      - run: sudo npm install -g serverless
+      - run: sls deploy -v
+
+workflows:
+  version: 2
+  build-test-and-approval-deploy:
+    jobs:
+      - build
+      - deploy:
+          requires:
+            - build

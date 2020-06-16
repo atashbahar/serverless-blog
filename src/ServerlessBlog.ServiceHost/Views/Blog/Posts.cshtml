@@ -1,0 +1,42 @@
+﻿@inject IOptions<BlogSettings> BlogSettings
+@model PagedList<Post>
+
+@{
+    ViewData["Title"] = "Posts";
+}
+
+@foreach (var post in Model.Items)
+{
+    <article>
+        <h1><a href="@Url.Action("Post", new {id = post.PostId})">@Html.Raw(post.Title)</a></h1>
+        <div class="post-nav">
+            <span class="post-date">@post.CreateDateString</span>
+            @if (!string.IsNullOrWhiteSpace(BlogSettings.Value.DisqusHandle))
+            {
+                <a href="@Url.Action("Post", new {id = post.PostId})#disqus_thread" data-disqus-identifier="@post.PostId" class="comment-count">Comments</a>
+            }
+        </div>
+        @Html.Raw(post.Body)
+    </article>
+    <hr/>
+}
+
+@if (Model.TotalPages > 1)
+{
+    <nav class="pagination" role="navigation">
+        @if (Model.PreviousPage.HasValue)
+        {
+            <a href="@Url.Action("Posts", new { page = Model.PreviousPage.Value })" class="newer-posts"><span aria-hidden="true">&larr;</span> Newer Posts</a>
+        }
+
+        @if (Model.NextPage.HasValue)
+        {
+            <a href="@Url.Action("Posts", new {page = Model.NextPage.Value})" class="older-posts">Older Posts <span aria-hidden="true">&rarr;</span></a>
+        }
+    </nav>
+}
+
+@if (!string.IsNullOrWhiteSpace(BlogSettings.Value.DisqusHandle))
+{
+    <script id="dsq-count-scr" src="//@(BlogSettings.Value.DisqusHandle).disqus.com/count.js" async></script>
+}
