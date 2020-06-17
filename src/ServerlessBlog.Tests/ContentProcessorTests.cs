@@ -34,7 +34,7 @@ namespace ServerlessBlog.Tests
         {
             // arrange
             var documentContent =
-                await File.ReadAllTextAsync("./DocumentSamples/detect-when-a-javascript-popup-window-gets-closed.md");
+                await File.ReadAllTextAsync("./DocumentSamples/sample-post.md");
             var documentStream = new MemoryStream(Encoding.UTF8.GetBytes(documentContent));
             var s3Response = new GetObjectResponse
             {
