@@ -1,15 +1,12 @@
 # Serverless Blog
-A blog created using serverless technologies.
-
-## Why you built this?
-I needed something that scales well for those few visitors I get every day.
+A blog created using serverless technologies (AWS Lambda, DynamoDB and ...).
 
 ## Is this the most efficient way to run a blog?
 No! There are many hosted services out there that you can easily have your blog up
 and running in just few minutes and they certainly offer you way more options.
 
 ## How it works?
-Here is a pretty diagram:
+Here is a how all the pieces fit together:
 
 ![Architecture Diagram](https://res.atashbahar.com/ServerlessBlog.png)
 
@@ -22,5 +19,5 @@ This is what happens:
 host your blog resources into (make sure they are publicly available)
 
 ## Can I use this for my own blog?
-Are you sure? If you feel adventures then by all means.
+Of course! Feel free to use it as is or use it as a starting point for your own projects.
 
